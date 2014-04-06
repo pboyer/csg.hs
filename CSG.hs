@@ -57,8 +57,8 @@ data Plane = Plane Vector Float deriving (Eq, Show, Read)
 instance Invert Plane where
     invert (Plane n w) = Plane (invert n) (negate w)
 
-splitPolygon :: Polygon -> Plane -> ([Polygon], [Polygon], [Polygon], [Polygon])
-splitPolygon pg pl = ([],[],[],[])
+splitPolygon :: Polygon -> Plane -> SplitResult
+splitPolygon pg pl = EmptySplitResult
 
 
 
@@ -68,15 +68,59 @@ instance Invert Polygon where
     invert (Polygon vs pl) = Polygon vs (invert pl)
 
 
-
 data Node = EmptyNode | Node Plane Node Node [Polygon]
 
 instance Invert Node where
     invert EmptyNode = EmptyNode
-    invert (Node p l r ps) = Node (invert p) (invert r) (invert l) (map invert ps)
+    invert (Node p f b ps) = Node (invert p) (invert b) (invert f) (map invert ps)
 
--- clipPolygons :: Node -> [Polygon] -> [Polygon]
 
+data SplitResult = EmptySplitResult | SplitResult {coplanarFront :: [Polygon], coplanarBack :: [Polygon], front :: [Polygon], back :: [Polygon] }
+
+mergeSplit :: SplitResult -> SplitResult -> SplitResult
+mergeSplit EmptySplitResult sr = sr
+mergeSplit sr EmptySplitResult = sr
+mergeSplit (SplitResult w x y z) (SplitResult w1 x1 y1 z1) = SplitResult (w ++ w1) (x ++ x1) (y ++ y1) (z ++ z1)
+
+foldSplit :: Plane -> SplitResult -> Polygon -> SplitResult
+foldSplit pl sr p = mergeSplit sr $ splitPolygon p pl
+
+
+clipPolygons :: Node -> [Polygon] -> [Polygon]
+clipPolygons EmptyNode ps = ps
+clipPolygons (Node p f b nps) ps = fa ++ ba
+    where
+        (SplitResult coF coB f1 b1) = foldl (foldSplit p) EmptySplitResult ps
+        fa = coF ++ f1
+        ba = coB ++ b1
+
+clipTo :: Node -> Node -> Node
+clipTo EmptyNode (Node p f b ps) = EmptyNode
+clipTo (Node p f b ps) EmptyNode = EmptyNode 
+clipTo n@(Node p f b ps) n1@(Node p1 f1 b1 ps1) = (Node p fn bn psn)
+    where 
+        psn = clipPolygons n1 ps
+        fn = clipTo f n1
+        bn = clipTo b n1
+
+allPolygons :: Node -> [Polygon]
+allPolygons EmptyNode = []
+allPolygons (Node _ f b ps) = ps ++ (allPolygons f) ++ (allPolygons b)
+
+buildNode :: Node -> [Polygon] -> Node
+buildNode n [] = n 
+buildNode EmptyNode ((Polygon vs pl):ps) = (Node pl f b ps) 
+    where
+        (SplitResult coF coB f1 b1) = foldl (foldSplit pl) EmptySplitResult ps
+        ps = coF ++ coB
+        f = buildNode EmptyNode f1
+        b = buildNode EmptyNode b1
+buildNode (Node pl f b ps) pps = (Node pl fn bn psn)
+    where
+        (SplitResult coF coB f1 b1) = foldl (foldSplit pl) EmptySplitResult pps
+        fn = buildNode f f1
+        bn = buildNode b b1
+        psn = ps ++ coF ++ coB
 
 
 
